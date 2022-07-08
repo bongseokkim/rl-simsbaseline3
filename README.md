@@ -15,3 +15,4 @@ rl algorithms repo
 ## reference 
 + [stable_baseline3](https://github.com/DLR-RM/stable-baselines3/tree/master/stable_baselines3)
 + [minimal-rl](https://github.com/seungeunrho/minimalRL)
++ [papers_with_code](https://paperswithcode.com/paper/playing-atari-with-deep-reinforcement#code)
