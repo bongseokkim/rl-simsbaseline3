@@ -5,6 +5,7 @@ rl algorithms repo
 + DQN
 + DDQN
 + Dueling DQN
++ Reinforce
 + A2C
 + A3C
 + DDPG
