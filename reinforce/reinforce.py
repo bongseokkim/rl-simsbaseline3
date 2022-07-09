@@ -13,7 +13,7 @@ from common.mlp import MLP
 
 
 class Reinforce(nn.Module):
-    def __init__(self,input_dim, output_dim, num_neurons,lr,gamma):
+    def __init__(self,input_dim, output_dim, num_neurons,lr,gamma, chkpt_dir,saving_name='reinforce'):
         super(Reinforce, self).__init__()
 
         self.actor = MLP(input_dim, output_dim, num_neurons,
@@ -23,7 +23,10 @@ class Reinforce(nn.Module):
         self.lr =lr 
         self.gamma = gamma
         self.action_memory = []
-        self.reward_memory = [] 
+        self.reward_memory = []
+        self.saving_name = saving_name
+        self.checkpoint_dir = chkpt_dir
+        self.checkpoint_file = os.path.join(self.checkpoint_dir, saving_name)
 
     def choose_action(self,obs):
         obs = torch.tensor(obs)
@@ -64,14 +67,37 @@ class Reinforce(nn.Module):
         self.action_memory = [] 
         self.reward_memory = [] 
     
-    def learn(self):
-        pass
+    def learn(self, env, num_episodes=10000):
+        score_history = [] 
+        score = 0 
+
+        for i in range(num_episodes):
+            print('episode: ', i,'score: ', score)
+            done = False
+            score = 0
+            observation = env.reset()
+            while not done:
+                action = agent.choose_action(observation)
+                observation_, reward, done, info = env.step(action)
+                agent.store_rewards(reward)
+                observation = observation_
+                score += reward
+            score_history.append(score)
+            agent.train()
+
+    def save_checkpoint(self):
+        print('\033[31m'+'... saving agent brain checkpoint ...'+'\033[0m')
+        torch.save(self.actor.state_dict(), self.checkpoint_file)
+        
+    def load_checkpoint(self):
+        print('\033[31m'+'... load agent brain checkpoint ...'+'\033[0m')
+        self.actor.load_state_dict(torch.load(self.checkpoint_file))
 
 
 if __name__=='__main__':
     env = gym.make('CartPole-v1')
     agent = Reinforce(lr = 0.001, input_dim=4, gamma=0.99, output_dim=2,
-                    num_neurons=[128,128])
+                    num_neurons=[128,128],chkpt_dir='model',saving_name='test')
     score_history = [] 
     score = 0 
     num_episodes = 2500
@@ -90,10 +116,9 @@ if __name__=='__main__':
             if score >=400 :
                 env.render()
         score_history.append(score)
-        agent.train()
-
-            
-        #agent.save_checkpoint()
+        agent.train()    
+        # agent.save_checkpoint()
+        # agent.load_checkpoint()
     env.close()
 
     
