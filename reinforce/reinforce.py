@@ -13,7 +13,7 @@ from common.mlp import MLP
 
 
 class Reinforce(nn.Module):
-    def __init__(self,input_dim, output_dim, num_neurons,lr,gamma, chkpt_dir,saving_name='reinforce'):
+    def __init__(self,input_dim, output_dim, num_neurons,lr,gamma, chkpt_dir,env,saving_name='reinforce'):
         super(Reinforce, self).__init__()
 
         self.actor = MLP(input_dim, output_dim, num_neurons,
@@ -27,6 +27,7 @@ class Reinforce(nn.Module):
         self.saving_name = saving_name
         self.checkpoint_dir = chkpt_dir
         self.checkpoint_file = os.path.join(self.checkpoint_dir, saving_name)
+        self.env = env 
 
     def choose_action(self,obs):
         obs = torch.tensor(obs)
@@ -67,23 +68,22 @@ class Reinforce(nn.Module):
         self.action_memory = [] 
         self.reward_memory = [] 
     
-    def learn(self, env, num_episodes=10000):
-        score_history = [] 
-        score = 0 
-
-        for i in range(num_episodes):
-            print('episode: ', i,'score: ', score)
-            done = False
-            score = 0
-            observation = env.reset()
-            while not done:
-                action = agent.choose_action(observation)
-                observation_, reward, done, info = env.step(action)
-                agent.store_rewards(reward)
-                observation = observation_
-                score += reward
-            score_history.append(score)
-            agent.train()
+    def learn(self, num_episodes=10000):
+            score_history = [] 
+            score = 0 
+            for i in range(num_episodes):
+                print('episode: ', i,'score: ', score)
+                done = False
+                score = 0
+                observation = self.env.reset()
+                while not done:
+                    action = self.choose_action(observation)
+                    observation_, reward, done, info = env.step(action)
+                    self.store_rewards(reward)
+                    observation = observation_
+                    score += reward
+                score_history.append(score)
+                self.train()
 
     def save_checkpoint(self):
         print('\033[31m'+'... saving agent brain checkpoint ...'+'\033[0m')
@@ -96,11 +96,12 @@ class Reinforce(nn.Module):
 
 if __name__=='__main__':
     env = gym.make('CartPole-v1')
-    agent = Reinforce(lr = 0.001, input_dim=4, gamma=0.99, output_dim=2,
+    agent = Reinforce(lr = 0.001, input_dim=4, gamma=0.99, output_dim=2,env=env,
                     num_neurons=[128,128],chkpt_dir='model',saving_name='test')
     score_history = [] 
     score = 0 
     num_episodes = 2500
+    best = 0 
 
     for i in range(num_episodes):
         print('episode: ', i,'score: ', score)
@@ -117,8 +118,11 @@ if __name__=='__main__':
                 env.render()
         score_history.append(score)
         agent.train()    
+        if score >= best : 
+            agent.save_checkpoint()
+            best = score 
         # agent.save_checkpoint()
         # agent.load_checkpoint()
     env.close()
-
+    #agent.learn()
     
