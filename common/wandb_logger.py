@@ -4,7 +4,7 @@ import datetime
 import os 
 import numpy as np
 
-class base_logger(object):
+class wandb_logger(object):
     def __init__(self,project_name, arg_parser):
         # make project folder to save asset
         self.experiment_id = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M")
@@ -29,9 +29,7 @@ class base_logger(object):
     def wandb_end(self):
         wandb.finish()
     
-    def wandb_log(self, reward_buffer,add_info:dict =None):
-        wandb.log({'mean_reward': np.mean(reward_buffer)})
-
+    def wandb_log(self, add_info:dict =None):
         if len(add_info) > 0 : 
             for name,value in add_info.items() :
                 wandb.log({name: value})
