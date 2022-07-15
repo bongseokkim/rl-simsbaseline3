@@ -1,6 +1,5 @@
 import os,sys
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname('common'))))
-from turtle import forward 
 import numpy as np 
 import gym
 import torch
