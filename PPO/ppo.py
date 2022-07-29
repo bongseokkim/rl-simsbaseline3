@@ -155,7 +155,6 @@ class PPO(nn.Module):
                     # Clipped Surrogate Objective
                     # loss = -torch.min(surr1, surr2) + F.smooth_l1_loss(self.critic.forward(state), td_target)
 
-                    # actor loss + critic loss
                     actor_loss = -torch.min(surr1, surr2)
                     critic_loss = F.smooth_l1_loss(self.critic.forward(state), td_target)
                     # smooth_l1_loss 는 nn.MSELoss 보다 이상치에 덜 민감해 기울기 폭발을 방지
