@@ -18,7 +18,7 @@ gae_lmbda = 0.95
 eps_clip = 0.2
 
 rollout_len = 3
-buffer_size = 30000
+buffer_size = 3000
 minibatch_size = 32
 
 experiment_id = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M")
@@ -35,7 +35,7 @@ class Actornetwork(nn.Module):
         self.fc_std = nn.Linear(hidden_size, num_outputs)  # for sigma
     def forward(self,x, softmax_dim=0 ):
         x = F.relu(self.fc1(x))
-        mu = (torch.tanh(self.fc_mu(x))+1)/2 ## env 에 맞춰 수정
+        mu = (torch.tanh(self.fc_mu(x))+1)/2
         sd = F.softmax(self.fc_std(x))
         return mu, sd
 
@@ -148,7 +148,7 @@ class PPO(nn.Module):
                     # mu, sd = self.actor.forward(state, softmax_dim=1)
                     normal = Normal(mu, sd)
                     log_prob = normal.log_prob(action)
-                    ratio = torch.exp(log_prob - old_log_prob)  
+                    ratio = torch.exp(log_prob - old_log_prob)  # a/b == exp(log(a)-log(b))
 
                     surr1 = ratio * advantage
                     surr2 = torch.clamp(ratio, 1 - eps_clip, 1 + eps_clip) * advantage
@@ -168,9 +168,10 @@ class PPO(nn.Module):
                     actor_loss.mean().backward()
                     self.actor_optimizer.step()
                     self.optimization_step += 1
-                  
+
+env = env()
 def main(sta=None):
-    gamma = 0.98
+    gamma = 0.99
     actor_lr = 0.00003;
     critic_lr = 0.0001;
     epoches = 10
@@ -189,7 +190,7 @@ def main(sta=None):
     for n_epi in range(10000):
         state = env.reset()
         done = False
-        for i in range(1002):
+        for i in range(32):
             for t in range(rollout_len):
                 state_buffer = []
                 reward_buffer = []
