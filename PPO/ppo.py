@@ -148,7 +148,7 @@ class PPO(nn.Module):
                     # mu, sd = self.actor.forward(state, softmax_dim=1)
                     normal = Normal(mu, sd)
                     log_prob = normal.log_prob(action)
-                    ratio = torch.exp(log_prob - old_log_prob)  # a/b == exp(log(a)-log(b))
+                    ratio = torch.exp(log_prob - old_log_prob)  
 
                     surr1 = ratio * advantage
                     surr2 = torch.clamp(ratio, 1 - eps_clip, 1 + eps_clip) * advantage
