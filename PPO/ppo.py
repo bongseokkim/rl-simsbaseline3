@@ -1,46 +1,44 @@
-import os
-from datetime import datetime
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import wandb
 from torch.distributions import Normal
 import numpy as np
 from env import env
 import matplotlib.pyplot as plt
 import datetime
+import wandb
+import os
 
 # Hyperparameters
 
-gae_lmbda = 0.95
-eps_clip = 0.2
 
-rollout_len = 3
-buffer_size = 3000
-minibatch_size = 32
+
+
 
 experiment_id = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M")
+os.mkdir(f"logs/{experiment_id}")
+# wandb.init(project='RL_PPO',name=f'experiment_{experiment_id}')
+# os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
-wandb.init(project='RL_PPO',name=f'experiment_{experiment_id}')
-os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
 class Actornetwork(nn.Module):
-    def __init__(self, num_inputs , hidden_size=128, num_outputs=1):
+    def __init__(self, num_inputs , hidden_size=32, num_outputs=1):
         super(Actornetwork, self).__init__()
         self.data = []
         self.fc1 = nn.Linear(num_inputs, hidden_size)
         self.fc_mu = nn.Linear(hidden_size, num_outputs)  # for mu
         self.fc_std = nn.Linear(hidden_size, num_outputs)  # for sigma
-    def forward(self,x, softmax_dim=0 ):
+    def forward(self, x, softmax_dim = 0):
         x = F.relu(self.fc1(x))
-        mu = (torch.tanh(self.fc_mu(x))+1)/2
+        mu = torch.tanh(self.fc_mu(x)+1)/2
+        # mu = self.fc_mu(x)
         sd = F.softmax(self.fc_std(x))
+        # sd = torch.clamp(sd,min=0.001, max=0.4)
         return mu, sd
 
 class Criticnetwork(nn.Module):
-    def __init__(self, num_inputs , hidden_size = 128, num_outputs = 1):
+    def __init__(self, num_inputs , hidden_size = 32, num_outputs = 1):
         super(Criticnetwork, self).__init__()
         self.fc1 = nn.Linear(num_inputs, hidden_size)
         self.fcv = nn.Linear(hidden_size, num_outputs) # for mu
@@ -51,56 +49,52 @@ class Criticnetwork(nn.Module):
 
 
 class PPO(nn.Module):
-    def __init__(self,epoches,input_dims, gamma, actor_lr, critic_lr, hidden_size):
+    def __init__(self,epoches,input_dims, gamma, actor_lr, critic_lr, hidden_size, buffer_size):
         super(PPO, self).__init__()
         self.data = []
         self.gamma = gamma
         self.epoches = epoches
         self.optimization_step = 0
-
-
+        self.buffer_size = buffer_size
+        self.max_norm = 1 # 0.5
+        self.eps_clip = 0.1
+        self.gae_lmbda = 0.95 #0.9 ~ 1.0     0.95 로 바꾸기
+        self.vf_coeff = 1 # 0.5, 1
+        self.entropy_coeff = 0 # 0 ~ 0.01
+        self.minibatch_size = 64  # 4 ~ 4096
+        self.input_dims = input_dims
         ## define actor & critic network
-        self.actor = Actornetwork(num_inputs=input_dims, hidden_size=hidden_size, num_outputs=1)
-        self.critic = Criticnetwork(num_inputs=input_dims, hidden_size=hidden_size, num_outputs=1)
+        self.actor = Actornetwork(num_inputs=self.input_dims, hidden_size=hidden_size, num_outputs=1)
+        self.critic = Criticnetwork(num_inputs=self.input_dims, hidden_size=hidden_size, num_outputs=1)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=actor_lr)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
 
-    def put_data(self, transition):
+    def append_data(self, transition):
         self.data.append(transition)
 
     def make_batch(self):
-        s_batch, a_batch, r_batch, s_prime_batch, prob_a_batch, done_batch = [], [], [], [], [], []
-        data = []
+        # data = []
+        s_lst, a_lst, r_lst, s_prime_lst, prob_a_lst, done_lst = [], [], [], [], [], []
 
-        for j in range(buffer_size):
-            for i in range(minibatch_size):
-                rollout = self.data.pop()
-                s_lst, a_lst, r_lst, s_prime_lst, prob_a_lst, done_lst = [], [], [], [], [], []
+        for transition in self.data:
+            s, a, r, s_prime, prob_a, done = transition
+            s_lst.append(s)
+            a_lst.append([a])
+            r_lst.append([r])
+            s_prime_lst.append(s_prime)
+            prob_a_lst.append([prob_a])
+            if done:
+                mask=0
+            else:
+                mask=1
+            done_lst.append([mask])
 
-                for transition in rollout:
-                    s, a, r, s_prime, prob_a, done = transition
+        s, a, r, s_prime, mask, old_log_prob= torch.tensor(s_lst, dtype=torch.float), torch.tensor(a_lst, dtype=torch.float),\
+                                                   torch.tensor(r_lst,dtype=torch.float), torch.tensor(s_prime_lst, dtype=torch.float),\
+                                                   torch.tensor(done_lst, dtype=torch.float), torch.tensor(prob_a_lst,dtype=torch.float)
+        self.data = []
+        return s, a, r, s_prime, mask, old_log_prob
 
-                    s_lst.append(s)
-                    a_lst.append([a])
-                    r_lst.append([r])
-                    s_prime_lst.append(s_prime)
-                    prob_a_lst.append([prob_a])
-                    done_mask = 0 if done else 1
-                    done_lst.append([done_mask])
-
-                s_batch.append(s_lst)
-                a_batch.append(a_lst)
-                r_batch.append(r_lst)
-                s_prime_batch.append(s_prime_lst)
-                prob_a_batch.append(prob_a_lst)
-                done_batch.append(done_lst)
-
-            mini_batch = torch.tensor(s_batch, dtype=torch.float), torch.tensor(a_batch, dtype=torch.float), \
-                         torch.tensor(r_batch, dtype=torch.float), torch.tensor(s_prime_batch, dtype=torch.float), \
-                         torch.tensor(done_batch, dtype=torch.float), torch.tensor(prob_a_batch, dtype=torch.float)
-            data.append(mini_batch)
-
-        return data
     def select_action(self, state):
         state = torch.tensor(state, dtype=torch.float)
         mu, sd = self.actor.forward(state)
@@ -110,119 +104,135 @@ class PPO(nn.Module):
         action = torch.clamp(min=0, max=1, input=action)
 
         return action.item(), log_prob.item()
-
-
-    def calc_advantage(self, data):
-        data_with_adv = []
-        for mini_batch in data:
-            s, a, r, s_prime, done_mask, old_log_prob = mini_batch
-            with torch.no_grad():
-                td_target = r + self.gamma * self.critic.forward(s_prime) * done_mask
-                delta = td_target - self.critic.forward(s)
-            delta = delta.numpy()
-            ## GAE advantage calculation \hat A_t = \delta_t + (r \lambda) \delta_{t+1} + ... + (r \lambda)^{T-t+1} \delta_{T-1}
-            advantage_lst = []
-            advantage = 0.0
-            for delta_t in delta[::-1]: #뒤에서부터 거꾸로 calculation
-                advantage = self.gamma * gae_lmbda * advantage + delta_t[0]
-                advantage_lst.append([advantage])
-            advantage_lst.reverse()
-            advantage = torch.tensor(advantage_lst, dtype=torch.float)
-            data_with_adv.append((s, a, r, s_prime, done_mask, old_log_prob, td_target, advantage))
-        return data_with_adv
+    def cal_advantage(self, adv, delta):
+        advantage = adv
+        advantage_lst = []
+        for delta_t in delta[::-1]:  # 뒤에서부터 거꾸로 calculation
+            advantage = self.gamma * self.gae_lmbda * advantage + delta_t[0]
+            advantage_lst.append([advantage])
+        advantage_lst.reverse()
+        return advantage_lst
 
     def train_net(self):
-        if len(self.data) == minibatch_size * buffer_size:
-            data = self.make_batch()
+        state, action, reward, s_prime, done_mask, old_log_prob = self.make_batch()
 
-            data = self.calc_advantage(data)
+        for i in range(self.epoches):
+            # for rollout_data in self.rollout_buffer.get(self.batch_size):
 
-            for i in range(self.epoches):
-                for mini_batch in data:
-                    state, action, reward, s_prime, done_mask, old_log_prob, td_target, advantage = mini_batch
-                    try:
-                        mu, sd = self.actor.forward(state, softmax_dim=1)
-                    except (AssertionError, ValueError) as e:
-                        mu, sd = self.actor.forward(state, softmax_dim=1)
+            with torch.no_grad():
+                td_target = reward + self.gamma * self.critic.forward(s_prime) * done_mask
+                delta = td_target - self.critic.forward(state)
+            delta = delta.numpy()
+            ## GAE advantage calculation \hat A_t = \delta_t + (r \lambda) \delta_{t+1} + ... + (r \lambda)^{T-t+1} \delta_{T-1}
+            adv = 0.0
+            advantage_lst = self.cal_advantage(adv, delta)
+            advantage = torch.tensor(advantage_lst, dtype=torch.float)
 
-                    # mu, sd = self.actor.forward(state, softmax_dim=1)
-                    normal = Normal(mu, sd)
-                    log_prob = normal.log_prob(action)
-                    ratio = torch.exp(log_prob - old_log_prob)  # a/b == exp(log(a)-log(b))
+            try:
+                mu, sd = self.actor.forward(state, softmax_dim=1)
+            except (AssertionError, ValueError) as e:
+                mu, sd = self.actor.forward(state, softmax_dim=1)
 
-                    surr1 = ratio * advantage
-                    surr2 = torch.clamp(ratio, 1 - eps_clip, 1 + eps_clip) * advantage
-                    # Clipped Surrogate Objective
-                    # loss = -torch.min(surr1, surr2) + F.smooth_l1_loss(self.critic.forward(state), td_target)
+            # mu, sd = self.actor.forward(state, softmax_dim=1)
+            normal = Normal(mu, sd)
+            log_prob = normal.log_prob(action)
+            ratio = torch.exp(log_prob - old_log_prob)
 
-                    actor_loss = -torch.min(surr1, surr2)
-                    critic_loss = F.smooth_l1_loss(self.critic.forward(state), td_target)
-                    # smooth_l1_loss 는 nn.MSELoss 보다 이상치에 덜 민감해 기울기 폭발을 방지
+            # self.critic_optimizer.zero_grad()
+            # critic_loss = F.smooth_l1_loss(self.critic.forward(state), td_target)  # smooth_l1_loss
+            #
+            # critic_loss.backward()
+            # nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_norm)
+            # self.critic_optimizer.step()
+            #
+            # # Clipped Surrogate ObjectivePPO,
+            #
+            # self.actor_optimizer.zero_grad()
+            # policy_adv = torch.min(ratio * advantage, torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantage) # policy reward
+            # policy_adv.backward()
+            # self.actor_optimizer.step()
+            # self.optimization_step += 1
 
-                    ### CHANGE
+            policy_adv = torch.min(ratio * advantage, torch.clamp(ratio, 1 - self.eps_clip,
+                                                                  1 + self.eps_clip) * advantage)  # policy reward
+            critic_loss = F.smooth_l1_loss(self.critic.forward(state), td_target)  # smooth_l1_loss
 
-                    self.critic_optimizer.zero_grad()
-                    critic_loss.mean().backward()
-                    self.critic_optimizer.step()
-                    self.actor_optimizer.zero_grad()
-                    actor_loss.mean().backward()
-                    self.actor_optimizer.step()
-                    self.optimization_step += 1
+            loss = -policy_adv + self.vf_coeff * critic_loss
+
+            ## CHANGE
+            self.actor_optimizer.zero_grad()
+            self.critic_optimizer.zero_grad()
+            loss.mean().backward()
+            nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_norm)
+            self.actor_optimizer.step()
+            self.critic_optimizer.step()
+            self.optimization_step += 1
+
 
 env = env()
 def main(sta=None):
     gamma = 0.99
-    actor_lr = 0.00003;
-    critic_lr = 0.0001;
-    epoches = 10
-    # actor_lr = 0.0002; critic_lr = 0.002;z
-    model = PPO(epoches=epoches, input_dims=3, gamma=gamma, actor_lr=actor_lr, critic_lr=critic_lr, hidden_size=128);
+    # actor_lr = 0.0002;
+    actor_lr = 0.0001 #0.00001
+    critic_lr = 0.001
+    epoches = 10 # Num of epoch when optimizing the surrogate loss
+    buffer_size = 30
+    T = 32 # 32
+
+
+    model = PPO(epoches=epoches, input_dims=3, gamma=gamma, actor_lr=actor_lr, critic_lr=critic_lr, hidden_size=32,
+                buffer_size = buffer_size);
+
     # model = PPO()
     score = 0.0
     print_interval = 1
-    rollout = []
-    epi_state = []
     epi_reward = []
+    epi_state = []
     epi_action = []
 
 
 
     for n_epi in range(10000):
+        state_buffer = []
+        reward_buffer = []
+        action_buffer = []
         state = env.reset()
         done = False
-        for i in range(32):
-            for t in range(rollout_len):
-                state_buffer = []
-                reward_buffer = []
-                action_buffer = []
+        # for k in range(max_len * 4):
+        #     state_representation.append((0, 0, 0))
+        # state_representation.append(state)
 
-                action, log_prob = model.select_action(state)
+        while not done:
+            for t in range(T):
+                # print(state_representation)
+                # state_concate = np.concatenate(state_representation)
+                action , log_prob = model.select_action(state)
+                # action, log_prob = model.select_action(state)
+                next_state, reward, done = env.step(action)
+                # state_representation.append(next_state)
+                # new_state_concate = np.concatenate(state_representation)
 
-                s_prime, reward, done = env.step(action)
-
-                rollout.append((state, action, reward, s_prime, log_prob, done))
-
-                if len(rollout) == rollout_len:
-                    model.put_data(rollout)
-                    rollout = []
+                transition = (state, action, reward, next_state, log_prob, done)
+                # model.data.append(transition)
+                model.append_data(transition)
+                state = next_state
+                score += reward
                 state_buffer.append(state)
                 action_buffer.append(action)
                 reward_buffer.append(reward)
-                state = s_prime
-                score += reward
                 if done:
                     epi_state.append(state_buffer)
+                    epi_reward.append(np.sum(reward_buffer) / t)
                     epi_action.append(action_buffer)
                     break
 
-            model.train_net()
+            critic_loss = model.train_net()
 
         if n_epi % print_interval == 0 and n_epi != 0:
-            print("# of episode :{}, avg reward : {:.1f}, opt step: {},  final state : {}, final action : {}".format(n_epi, score / print_interval,
-                                                                    model.optimization_step,state,action))
-            epi_reward.append(score / print_interval)
-            wandb.log({'mean_reward': score / print_interval, 'action': action})
+            print("# of episode :{}, avg score : {:.1f},final state : {}, final action : {}, opt step: {}".format(n_epi, score / print_interval,state, action, model.optimization_step))
+            # wandb.log({'mean_reward': score / print_interval, 'action': a})
             score = 0.0
+ 
 
 
 if __name__ == '__main__':
